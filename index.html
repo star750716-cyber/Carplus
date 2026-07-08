@@ -1,0 +1,1323 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>格上租車 北一部二課 業務行事曆線上登記系統</title>
+    <!-- Chosen Palette: Corporate Blue (#004B87) & Corporate Orange (#FF6A00) with Warm Neutrals -->
+    <!-- Application Structure Plan: Immersive interactive responsive calendar client dashboard allowing salesperson isolation & manager statistics control -->
+    <!-- Visualization & Content Choices: Calendar matrix showing personal vs all events, Canvas chart for team stats analytics. NO SVG graphics used inside. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    
+    <!-- React and ReactDOM CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel Standalone for JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts for premium design -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght=300;400;500;700;900&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        leshineBlue: '#004B87',      
+                        leshineOrange: '#FF6A00',    
+                        leshineLightBlue: '#F0F6FC',  
+                        leshineNavy: '#002E54',      
+                    },
+                    fontFamily: {
+                        sans: ['Noto Sans TC', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #F8FAFC;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #F1F5F9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #CBD5E1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94A3B8;
+        }
+    </style>
+
+    <!-- Firebase 11.6.1 SDK 與 Analytics 整合 -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAnalytics, isSupported } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // 您的 Firebase Web 應用程式設定
+        const firebaseConfig = {
+            apiKey: "AIzaSyCsH9jC8A2pfN8WXHa32pMnHrVLvMXpV8U",
+            authDomain: "leshine-car-calendar.firebaseapp.com",
+            projectId: "leshine-car-calendar",
+            storageBucket: "leshine-car-calendar.firebasestorage.app",
+            messagingSenderId: "942204642588",
+            appId: "1:942204642588:web:c013d4691a65f69587c6d9",
+            measurementId: "G-L6XVB901EN"
+        };
+
+        // 初始化 Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // 安全初始化 Google Analytics
+        isSupported().then((supported) => {
+            if (supported) {
+                const analytics = getAnalytics(app);
+                window.firebaseAnalytics = analytics;
+            }
+        }).catch((err) => {
+            console.warn("Analytics is not supported in this environment:", err);
+        });
+
+        window.firebaseInitialized = true;
+        window.firebaseAuth = auth;
+        window.firebaseDb = db;
+        window.firebaseSDK = {
+            signInAnonymously,
+            signInWithCustomToken,
+            onAuthStateChanged,
+            doc,
+            collection,
+            query,
+            onSnapshot,
+            addDoc,
+            updateDoc,
+            deleteDoc,
+            setDoc,
+            getDocs
+        };
+
+        window.dispatchEvent(new Event('firebase-ready'));
+    </script>
+</head>
+<body class="text-slate-800 antialiased min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const DEFAULT_SALESMEN = [
+            "鄭創澤", "彭詩皓", "姚紫瑩", "張珮羽", "周國煌", "吳元鑫", "鄭鈞淵", "郭秉傑"
+        ];
+
+        const CATEGORY_COLORS = {
+            "通路拜訪": { bg: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
+            "客戶開發": { bg: "bg-sky-50 text-sky-700 border-sky-200", dot: "bg-sky-500" },
+            "報價紀錄": { bg: "bg-amber-50 text-amber-700 border-amber-200", dot: "bg-amber-500" },
+            "領牌": { bg: "bg-indigo-50 text-indigo-700 border-indigo-200", dot: "bg-indigo-500" },
+            "交車": { bg: "bg-rose-50 text-rose-700 border-rose-200", dot: "bg-rose-500" },
+            "客戶服務": { bg: "bg-purple-50 text-purple-700 border-purple-200", dot: "bg-purple-500" }
+        };
+
+        function App() {
+            const [fbReady, setFbReady] = useState(false);
+            const [user, setUser] = useState(null);
+            
+            const [salesmen, setSalesmen] = useState([]);
+            const [events, setEvents] = useState([]);
+            
+            const [currentRole, setCurrentRole] = useState(null); 
+            const [currentUser, setCurrentUser] = useState(null); 
+            
+            const [selectedYear, setSelectedYear] = useState(2026);
+            const [selectedMonth, setSelectedMonth] = useState(7); 
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+            const [selectedDate, setSelectedDate] = useState("");
+            const [editingEvent, setEditingEvent] = useState(null);
+            const [adminPasswordInput, setAdminPasswordInput] = useState("");
+            const [adminError, setAdminError] = useState("");
+            const [showAdminLoginModal, setShowAdminLoginModal] = useState(false);
+            
+            const [adminTab, setAdminTab] = useState("calendar"); 
+            const [adminSelectedSalesman, setAdminSelectedSalesman] = useState("all"); // 'all' or specific salesman name
+            
+            const [newSalesmanName, setNewSalesmanName] = useState("");
+            const [toastMessage, setToastMessage] = useState("");
+
+            const [formTitle, setFormTitle] = useState("");
+            const [formCategory, setFormCategory] = useState("通路拜訪");
+            const [formStartTime, setFormStartTime] = useState("09:00");
+            const [formEndTime, setFormEndTime] = useState("10:00");
+            const [formLocation, setFormLocation] = useState("");
+            const [formCustomer, setFormCustomer] = useState("");
+            const [formRemark, setFormRemark] = useState("");
+
+            // 確保 Firebase SDK 掛載完成
+            useEffect(() => {
+                const checkFirebase = () => {
+                    if (window.firebaseInitialized) {
+                        setFbReady(true);
+                    } else {
+                        setTimeout(checkFirebase, 100);
+                    }
+                };
+                checkFirebase();
+                window.addEventListener('firebase-ready', () => setFbReady(true));
+                return () => window.removeEventListener('firebase-ready', () => {});
+            }, []);
+
+            useEffect(() => {
+                if (!fbReady) return;
+
+                const { signInAnonymously, signInWithCustomToken, onAuthStateChanged } = window.firebaseSDK;
+                const auth = window.firebaseAuth;
+
+                const runAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            try {
+                                await signInWithCustomToken(auth, __initial_auth_token);
+                            } catch (tokenErr) {
+                                console.warn("Custom token failed, switching to anonymous...", tokenErr);
+                                await signInAnonymously(auth);
+                            }
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Firebase Auth Error:", error);
+                        showToast("雲端連線失敗，請檢查網路狀態");
+                    }
+                };
+                runAuth();
+
+                const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+                    setUser(currentUser);
+                });
+
+                return () => {
+                    unsubscribeAuth();
+                };
+            }, [fbReady]);
+
+            // 即時監聽雲端資料庫（業務清單、行程清單）
+            useEffect(() => {
+                if (!user) return;
+
+                const { collection, query, onSnapshot, addDoc } = window.firebaseSDK;
+                const db = window.firebaseDb;
+                const appId = "leshine-car-calendar";
+
+                // 訂閱業務名單
+                const salesmenCol = collection(db, 'artifacts', appId, 'public', 'data', 'salesmen');
+                const unsubscribeSalesmen = onSnapshot(salesmenCol, (snapshot) => {
+                    if (snapshot.empty) {
+                        // 若空資料庫，自動寫入 8 位預設核心同仁
+                        DEFAULT_SALESMEN.forEach(async (name) => {
+                            await addDoc(salesmenCol, { name, createdAt: new Date().toISOString() });
+                        });
+                    } else {
+                        const list = [];
+                        snapshot.forEach((doc) => {
+                            list.push({ id: doc.id, ...doc.data() });
+                        });
+                        list.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+                        setSalesmen(list.map(s => s.name));
+                    }
+                }, (error) => {
+                    console.error("Salesmen Subscription Error:", error);
+                });
+
+                // 訂閱行程數據
+                const eventsCol = collection(db, 'artifacts', appId, 'public', 'data', 'events');
+                const unsubscribeEvents = onSnapshot(eventsCol, (snapshot) => {
+                    const list = [];
+                    snapshot.forEach((doc) => {
+                        list.push({ id: doc.id, ...doc.data() });
+                    });
+                    setEvents(list);
+                }, (error) => {
+                    console.error("Events Subscription Error:", error);
+                });
+
+                return () => {
+                    unsubscribeSalesmen();
+                    unsubscribeEvents();
+                };
+            }, [user]);
+
+            // 智慧防回溯年度保護：當 2027 的 1~6 月切換為 2026 時，重設至合法的 7 月
+            useEffect(() => {
+                if (selectedYear === 2026 && selectedMonth < 7) {
+                    setSelectedMonth(7);
+                }
+            }, [selectedYear, selectedMonth]);
+
+            // 動態決定月份選單
+            const availableMonths = useMemo(() => {
+                if (selectedYear === 2026) {
+                    return [7, 8, 9, 10, 11, 12];
+                } else {
+                    return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+                }
+            }, [selectedYear]);
+
+            const showToast = (msg) => {
+                setToastMessage(msg);
+                setTimeout(() => setToastMessage(""), 3500);
+            };
+
+            const handleSelectSalesman = (name) => {
+                setCurrentRole("salesman");
+                setCurrentUser(name);
+                showToast(`已登入為業務員：${name}`);
+            };
+
+            const handleAdminLogin = (e) => {
+                e.preventDefault();
+                if (adminPasswordInput === "admin123") {
+                    setCurrentRole("admin");
+                    setCurrentUser("管理者");
+                    setShowAdminLoginModal(false);
+                    setAdminPasswordInput("");
+                    setAdminError("");
+                    setAdminTab("calendar");
+                    setAdminSelectedSalesman("all"); // 預設顯示全體
+                    showToast("管理員身份驗證成功");
+                } else {
+                    setAdminError("密碼錯誤，請重新輸入");
+                }
+            };
+
+            const handleLogout = () => {
+                setCurrentRole(null);
+                setCurrentUser(null);
+                setAdminTab("calendar");
+                setAdminSelectedSalesman("all");
+                showToast("您已安全登出系統");
+            };
+
+            const handleAddNewSalesman = async (e) => {
+                e.preventDefault();
+                if (!newSalesmanName.trim()) return;
+                
+                if (salesmen.includes(newSalesmanName.trim())) {
+                    showToast("此業務人員名稱已存在！");
+                    return;
+                }
+
+                try {
+                    const { collection, addDoc } = window.firebaseSDK;
+                    const db = window.firebaseDb;
+                    const appId = "leshine-car-calendar";
+                    
+                    const salesmenCol = collection(db, 'artifacts', appId, 'public', 'data', 'salesmen');
+                    await addDoc(salesmenCol, { 
+                        name: newSalesmanName.trim(), 
+                        createdAt: new Date().toISOString() 
+                    });
+                    
+                    showToast(`成功新增同仁：${newSalesmanName}`);
+                    setNewSalesmanName("");
+                } catch (err) {
+                    console.error("Error adding salesman:", err);
+                    showToast("新增失敗，請檢查權限及網路。");
+                }
+            };
+
+            const daysInMonth = useMemo(() => {
+                return new Date(selectedYear, selectedMonth, 0).getDate();
+            }, [selectedYear, selectedMonth]);
+
+            const startDayOfWeek = useMemo(() => {
+                return new Date(selectedYear, selectedMonth - 1, 1).getDay();
+            }, [selectedYear, selectedMonth]);
+
+            const filteredEvents = useMemo(() => {
+                if (currentRole === 'admin') {
+                    if (adminSelectedSalesman === 'all') {
+                        return events;
+                    } else {
+                        return events.filter(e => e.salesman === adminSelectedSalesman);
+                    }
+                } else {
+                    return events.filter(e => e.salesman === currentUser);
+                }
+            }, [events, currentRole, currentUser, adminSelectedSalesman]);
+
+            const stats = useMemo(() => {
+                const counts = { "通路拜訪": 0, "客戶開發": 0, "報價紀錄": 0, "領牌": 0, "交車": 0, "客戶服務": 0 };
+                const userCounts = {};
+                const userCategoryCounts = {};
+                
+                salesmen.forEach(name => {
+                    userCounts[name] = 0;
+                    userCategoryCounts[name] = { "通路拜訪": 0, "客戶開發": 0, "報價紀錄": 0, "領牌": 0, "交車": 0, "客戶服務": 0 };
+                });
+
+                // 一律以經篩選過濾後的活動為主（管理者看單人時即顯示單人）
+                filteredEvents.forEach(ev => {
+                    if (counts[ev.category] !== undefined) {
+                        counts[ev.category]++;
+                    }
+                    
+                    if (ev.salesman) {
+                        if (userCounts[ev.salesman] === undefined) {
+                            userCounts[ev.salesman] = 0;
+                        }
+                        userCounts[ev.salesman]++;
+
+                        if (userCategoryCounts[ev.salesman] === undefined) {
+                            userCategoryCounts[ev.salesman] = { "通路拜訪": 0, "客戶開發": 0, "報價紀錄": 0, "領牌": 0, "交車": 0, "客戶服務": 0 };
+                        }
+                        if (userCategoryCounts[ev.salesman][ev.category] !== undefined) {
+                            userCategoryCounts[ev.salesman][ev.category]++;
+                        }
+                    }
+                });
+
+                return { counts, userCounts, userCategoryCounts };
+            }, [filteredEvents, salesmen]);
+
+            const openAddModal = (day) => {
+                if (!currentUser) {
+                    showToast("請先點選您的使用者名稱以進行登入登記！");
+                    return;
+                }
+                const formattedDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                setSelectedDate(formattedDate);
+                setEditingEvent(null);
+                
+                setFormTitle("");
+                setFormCategory("通路拜訪");
+                setFormStartTime("09:00");
+                setFormEndTime("10:00");
+                setFormLocation("");
+                setFormCustomer("");
+                setFormRemark("");
+                
+                setIsModalOpen(true);
+            };
+
+            const openEditModal = (event, e) => {
+                e.stopPropagation(); 
+                if (!currentUser) return;
+                
+                if (currentRole !== 'admin' && event.salesman !== currentUser) {
+                    showToast("您僅能修改屬於您自己的登記行程！");
+                    return;
+                }
+
+                setEditingEvent(event);
+                setSelectedDate(event.date);
+                setFormTitle(event.title);
+                setFormCategory(event.category);
+                setFormStartTime(event.startTime);
+                setFormEndTime(event.endTime);
+                setFormLocation(event.location);
+                setFormCustomer(event.customer);
+                setFormRemark(event.remark || "");
+                
+                setIsModalOpen(true);
+            };
+
+            const handleSaveEvent = async (e) => {
+                e.preventDefault();
+                if (!formTitle.trim()) {
+                    showToast("請輸入行程名稱！");
+                    return;
+                }
+
+                const eventPayload = {
+                    date: selectedDate,
+                    title: formTitle,
+                    category: formCategory,
+                    startTime: formStartTime,
+                    endTime: formEndTime,
+                    location: formLocation,
+                    customer: formCustomer,
+                    remark: formRemark,
+                    salesman: editingEvent ? editingEvent.salesman : currentUser, 
+                    updatedAt: new Date().toISOString()
+                };
+
+                const { collection, doc, addDoc, updateDoc } = window.firebaseSDK;
+                const db = window.firebaseDb;
+                const appId = "leshine-car-calendar";
+
+                try {
+                    if (editingEvent) {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', editingEvent.id);
+                        await updateDoc(docRef, eventPayload);
+                        showToast("行程更新成功！");
+                    } else {
+                        const eventsCol = collection(db, 'artifacts', appId, 'public', 'data', 'events');
+                        await addDoc(eventsCol, eventPayload);
+                        showToast("行程新增成功！");
+                    }
+                    setIsModalOpen(false);
+                } catch (error) {
+                    console.error("Firestore Save Error:", error);
+                    showToast("寫入資料失敗，請確認網路或管理權限。");
+                }
+            };
+
+            const triggerDeleteConfirmation = () => {
+                setIsDeleteConfirmOpen(true);
+            };
+
+            const confirmDeleteEvent = async () => {
+                if (!editingEvent) return;
+
+                const { doc, deleteDoc } = window.firebaseSDK;
+                const db = window.firebaseDb;
+                const appId = "leshine-car-calendar";
+
+                try {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', editingEvent.id);
+                    await deleteDoc(docRef);
+                    showToast("行程已成功刪除。");
+                    setIsDeleteConfirmOpen(false);
+                    setIsModalOpen(false);
+                } catch (error) {
+                    console.error("Firestore Delete Error:", error);
+                    showToast("刪除失敗，請檢查連線狀態。");
+                }
+            };
+
+            const handleExportCSV = () => {
+                if (currentRole !== 'admin') {
+                    showToast("只有管理者身分可以匯出行程資料！");
+                    return;
+                }
+
+                const headers = ["日期", "業務員", "行程名稱", "開始時間", "結束時間", "行程類別", "出差地點", "客戶名稱/同業通路", "備註"];
+                const sortedEvents = [...events].sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+                
+                const rows = sortedEvents.map(ev => [
+                    ev.date,
+                    ev.salesman || "",
+                    ev.title || "",
+                    ev.startTime || "",
+                    ev.endTime || "",
+                    ev.category || "",
+                    ev.location || "",
+                    ev.customer || "",
+                    ev.remark || ""
+                ]);
+
+                let csvContent = "\uFEFF";
+                csvContent += headers.join(",") + "\r\n";
+                
+                rows.forEach(row => {
+                    const cleanRow = row.map(val => {
+                        const escaped = String(val).replace(/"/g, '""');
+                        return `"${escaped}"`;
+                    });
+                    csvContent += cleanRow.join(",") + "\r\n";
+                });
+
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.setAttribute("href", url);
+                link.setAttribute("download", `格上租車_北一部二課_全體業務日程表_${selectedYear}年.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showToast("行程資料 Excel 格式匯出完成！");
+            };
+
+            // 匯出 iCalendar (.ics) 格式行事曆
+            const handleExportICS = (isAll = false) => {
+                const targetEvents = isAll 
+                    ? events 
+                    : events.filter(e => e.salesman === currentUser);
+
+                if (targetEvents.length === 0) {
+                    showToast("尚無行程資料可供匯出！");
+                    return;
+                }
+
+                // ics 安全字元處理
+                const escapeICS = (str) => {
+                    if (!str) return "";
+                    return String(str)
+                        .replace(/\\/g, "\\\\")
+                        .replace(/;/g, "\\;")
+                        .replace(/,/g, "\\,")
+                        .replace(/\n/g, "\\n")
+                        .replace(/\r/g, "");
+                };
+
+                let icsContent = [
+                    "BEGIN:VCALENDAR",
+                    "VERSION:2.0",
+                    "PRODID:-//Leshine Car//Calendar App//ZH",
+                    "CALSCALE:GREGORIAN",
+                    "METHOD:PUBLISH"
+                ];
+
+                targetEvents.forEach(ev => {
+                    const dateClean = ev.date.replace(/-/g, ""); 
+                    const startClean = (ev.startTime || "00:00").replace(/:/g, "") + "00"; 
+                    const endClean = (ev.endTime || "23:59").replace(/:/g, "") + "00"; 
+
+                    // 設定台北標準時區
+                    const dtStart = `DTSTART;TZID=Asia/Taipei:${dateClean}T${startClean}`;
+                    const dtEnd = `DTEND;TZID=Asia/Taipei:${dateClean}T${endClean}`;
+                    const dtStamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+
+                    const summary = escapeICS(`[${ev.category}] ${ev.title}`);
+                    const description = escapeICS(`業務員: ${ev.salesman || ""}\n客戶/同業: ${ev.customer || ""}\n備註: ${ev.remark || ""}`);
+                    const location = escapeICS(ev.location || "");
+                    const uid = `${ev.id || Math.random().toString(36).substring(2)}@leshine-car-calendar`;
+
+                    icsContent.push("BEGIN:VEVENT");
+                    icsContent.push(`UID:${uid}`);
+                    icsContent.push(`DTSTAMP:${dtStamp}`);
+                    icsContent.push(dtStart);
+                    icsContent.push(dtEnd);
+                    icsContent.push(`SUMMARY:${summary}`);
+                    icsContent.push(`DESCRIPTION:${description}`);
+                    if (location) {
+                        icsContent.push(`LOCATION:${location}`);
+                    }
+                    icsContent.push("END:VEVENT");
+                });
+
+                icsContent.push("END:VCALENDAR");
+
+                const icsString = icsContent.join("\r\n");
+                const blob = new Blob([icsString], { type: 'text/calendar;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                const filename = isAll 
+                    ? `格上租車_北一部二課_全體業務行事曆.ics` 
+                    : `格上租車_業務行事曆_${currentUser}.ics`;
+                link.setAttribute("href", url);
+                link.setAttribute("download", filename);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showToast(`${isAll ? "全體" : "個人"} ICS 行事曆匯出完成！`);
+            };
+
+            return (
+                <div class="flex-grow flex flex-col">
+                    {toastMessage && (
+                        <div class="fixed top-5 right-5 z-50 bg-slate-900/95 backdrop-blur text-white py-3 px-5 rounded-xl shadow-2xl border border-slate-700 flex items-center space-x-3 transition-all duration-300">
+                            <span class="w-2 h-2 rounded-full bg-leshineOrange animate-pulse"></span>
+                            <span class="text-sm font-medium">{toastMessage}</span>
+                        </div>
+                    )}
+
+                    <header class="bg-leshineBlue text-white shadow-lg sticky top-0 z-40">
+                        <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+                            <div class="flex items-center space-x-3">
+                                <div class="bg-white p-1 rounded-lg flex items-center justify-center shadow-md w-24 h-10 overflow-hidden">
+                                    <img 
+                                        src="https://static.wixstatic.com/media/7a9f89_c66df3b004284659ba79a2f3419f2b63~mv2.jpg" 
+                                        alt="格上租車" 
+                                        class="max-h-full max-w-full object-contain" 
+                                        onerror="this.onerror=null; this.src='https://via.placeholder.com/120x40?text=格上租車'"
+                                    />
+                                </div>
+                                <div class="border-l-2 border-orange-500/50 pl-3">
+                                    <h1 class="text-lg font-black tracking-wider flex items-center">
+                                        北一部二課
+                                        <span class="ml-2 px-2 py-0.5 bg-leshineOrange text-xs text-white rounded font-medium">業務行事曆系統</span>
+                                    </h1>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center space-x-3 text-sm">
+                                {currentUser ? (
+                                    <div class="flex items-center space-x-2 bg-white/10 px-3 py-1.5 rounded-lg border border-white/10">
+                                        <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                        <span class="font-medium text-blue-50">
+                                            {currentRole === 'admin' ? "🔑 課級管理者" : `業務員: ${currentUser}`}
+                                        </span>
+                                        <button 
+                                            onClick={handleLogout}
+                                            class="ml-3 hover:text-leshineOrange text-xs font-semibold text-orange-200 transition bg-black/20 hover:bg-black/40 px-2 py-0.5 rounded"
+                                        >
+                                            登出
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div class="flex space-x-2">
+                                        <button 
+                                            onClick={() => setShowAdminLoginModal(true)}
+                                            class="bg-leshineNavy text-white hover:bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-lg font-medium transition text-xs shadow"
+                                        >
+                                            課長登入
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </header>
+
+                    {!fbReady ? (
+                        <div class="flex-grow flex flex-col items-center justify-center p-8 bg-slate-50">
+                            <div class="w-12 h-12 border-4 border-leshineBlue border-t-leshineOrange rounded-full animate-spin"></div>
+                            <p class="mt-4 text-sm text-slate-500 font-medium">正在載入格上雲端協作模組...</p>
+                        </div>
+                    ) : !currentUser ? (
+                        <div class="flex-grow max-w-4xl mx-auto px-4 py-12 flex flex-col justify-center w-full">
+                            <div class="text-center mb-10">
+                                <h2 class="text-3xl font-black text-slate-800 tracking-tight">歡迎使用格上行事曆登記系統</h2>
+                                <p class="text-slate-500 mt-2 text-sm max-w-lg mx-auto">為了維護客戶資安與業務行程獨立性，請先選擇您自己的使用者名稱登入，以開始管理您的每日行事曆行程。</p>
+                            </div>
+
+                            <div class="bg-white rounded-2xl shadow-xl p-8 border border-slate-100">
+                                <div class="flex justify-between items-center mb-6">
+                                    <h3 class="text-md font-bold text-slate-700 flex items-center">
+                                        <span class="w-1.5 h-4 bg-leshineOrange rounded-full mr-2"></span>
+                                        點擊您的姓名以安全登入
+                                    </h3>
+                                    <span class="text-xs text-slate-400">目前二課名單</span>
+                                </div>
+
+                                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                    {salesmen.map((name) => (
+                                        <button
+                                            key={name}
+                                            onClick={() => handleSelectSalesman(name)}
+                                            class="p-4 bg-slate-50 hover:bg-leshineLightBlue border border-slate-100 hover:border-leshineBlue/30 text-slate-700 hover:text-leshineBlue font-semibold rounded-xl text-center shadow-sm hover:shadow-md transition-all duration-200 transform hover:-translate-y-0.5"
+                                        >
+                                            {name}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div class="text-center mt-8">
+                                <p class="text-xs text-slate-400">格上租車 台北第一一部二課 版權所有 © 2026</p>
+                            </div>
+                        </div>
+                    ) : (
+                        <main class="flex-grow max-w-7xl w-full mx-auto px-4 py-6 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-6">
+                            
+                            <section class="lg:col-span-3 flex flex-col space-y-6">
+                                
+                                <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                                    <h3 class="text-sm font-bold text-slate-500 mb-4 tracking-wider uppercase">行事曆切換</h3>
+                                    
+                                    <div class="space-y-4">
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-400 mb-1">年度</label>
+                                            <select 
+                                                value={selectedYear}
+                                                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                                                class="w-full bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-leshineBlue/20"
+                                            >
+                                                <option value={2026}>2026 年</option>
+                                                <option value={2027}>2027 年</option>
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-400 mb-1">選擇月份</label>
+                                            <div class="grid grid-cols-3 gap-1.5">
+                                                {availableMonths.map((m) => (
+                                                    <button
+                                                        key={m}
+                                                        onClick={() => setSelectedMonth(m)}
+                                                        class={`py-2 text-xs font-bold rounded-lg transition-all duration-150 ${selectedMonth === m ? 'bg-leshineBlue text-white shadow-sm' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                                                    >
+                                                        {m} 月
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {currentRole === 'salesman' && (
+                                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                                        <h4 class="text-xs font-bold text-slate-400 tracking-wider uppercase mb-3">個人工具</h4>
+                                        <button
+                                            onClick={() => handleExportICS(false)}
+                                            class="w-full bg-leshineLightBlue hover:bg-blue-100 text-leshineBlue font-bold py-2.5 px-4 rounded-xl text-xs transition duration-150 flex items-center justify-center space-x-2 border border-blue-200"
+                                        >
+                                            <span>📅</span>
+                                            <span>匯出個人行事曆 (ICS)</span>
+                                        </button>
+                                        <p class="text-[10px] text-slate-400 mt-2 text-center">下載後可直接匯入 Outlook / Google 行事曆</p>
+                                    </div>
+                                )}
+
+                                {currentRole === 'admin' && (
+                                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-3">
+                                        <div class="flex flex-col space-y-1">
+                                            <button 
+                                                onClick={() => setAdminTab("calendar")}
+                                                class={`flex items-center space-x-2.5 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${adminTab === 'calendar' ? 'bg-leshineLightBlue text-leshineBlue' : 'text-slate-600 hover:bg-slate-50'}`}
+                                            >
+                                                <span>📅</span>
+                                                <span>行事曆主面板</span>
+                                            </button>
+                                            <button 
+                                                onClick={() => setAdminTab("stats")}
+                                                class={`flex items-center space-x-2.5 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${adminTab === 'stats' ? 'bg-leshineLightBlue text-leshineBlue' : 'text-slate-600 hover:bg-slate-50'}`}
+                                            >
+                                                <span>📈</span>
+                                                <span>全體統計看板</span>
+                                            </button>
+                                            <button 
+                                                onClick={() => setAdminTab("users")}
+                                                class={`flex items-center space-x-2.5 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${adminTab === 'users' ? 'bg-leshineLightBlue text-leshineBlue' : 'text-slate-600 hover:bg-slate-50'}`}
+                                            >
+                                                <span>👥</span>
+                                                <span>同仁成員管理</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                                    <h4 class="text-xs font-bold text-slate-400 tracking-wider uppercase mb-3">行程類別標籤</h4>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        {Object.entries(CATEGORY_COLORS).map(([cat, style]) => (
+                                            <div key={cat} class="flex items-center space-x-2 p-1.5 rounded-lg bg-slate-50 text-xs text-slate-600 border border-slate-100">
+                                                <span class={`w-2.5 h-2.5 rounded-full ${style.dot}`}></span>
+                                                <span class="font-medium">{cat}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {currentRole === 'admin' && (
+                                    <div class="bg-gradient-to-br from-leshineBlue to-leshineNavy text-white rounded-2xl shadow-md p-5 flex flex-col space-y-3">
+                                        <div>
+                                            <h4 class="text-sm font-black">管理者專用數據</h4>
+                                            <p class="text-xs text-blue-200 mt-1">您可以隨時匯出二課所有業務的已登記行程，進行備份或與個人手機同步。</p>
+                                        </div>
+                                        <div class="space-y-2">
+                                            <button
+                                                onClick={handleExportCSV}
+                                                class="w-full bg-leshineOrange hover:bg-orange-600 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition duration-150 flex items-center justify-center space-x-2 shadow-md"
+                                            >
+                                                <span>📥</span>
+                                                <span>匯出全體行程 Excel</span>
+                                            </button>
+                                            <button
+                                                onClick={() => handleExportICS(true)}
+                                                class="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition duration-150 flex items-center justify-center space-x-2 border border-white/20 shadow-md"
+                                            >
+                                                <span>📅</span>
+                                                <span>匯出全體行程 (ICS)</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
+
+                            <section class="lg:col-span-9">
+                                {currentRole === 'admin' && adminTab === 'stats' ? (
+                                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-6">
+                                        <div>
+                                            <h2 class="text-xl font-black text-slate-800">二課業務活動數據分析</h2>
+                                            <p class="text-xs text-slate-400 mt-1">即時統計全體行程登錄類別與同仁活動次數</p>
+                                        </div>
+
+                                        {/* 總體統計兩欄卡片 */}
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <div class="bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                                                <h3 class="text-sm font-bold text-slate-700 mb-4 flex items-center">
+                                                    <span class="w-1.5 h-4 bg-leshineOrange rounded-full mr-2"></span>
+                                                    行程類別比例
+                                                </h3>
+                                                <div class="space-y-3.5">
+                                                    {Object.keys(stats.counts).map(category => {
+                                                        const count = stats.counts[category];
+                                                        const total = Object.values(stats.counts).reduce((a, b) => a + b, 0) || 1;
+                                                        const percentage = ((count / total) * 100).toFixed(1);
+                                                        return (
+                                                            <div key={category} class="space-y-1">
+                                                                <div class="flex justify-between text-xs text-slate-600 font-medium">
+                                                                    <span>{category}</span>
+                                                                    <span>{count} 次 ({percentage}%)</span>
+                                                                </div>
+                                                                <div class="w-full bg-slate-200 rounded-full h-2">
+                                                                    <div 
+                                                                        class={`h-full rounded-full ${CATEGORY_COLORS[category]?.dot || 'bg-blue-500'}`} 
+                                                                        style={{ width: `${percentage}%` }}
+                                                                    ></div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+
+                                            <div class="bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                                                <h3 class="text-sm font-bold text-slate-700 mb-4 flex items-center">
+                                                    <span class="w-1.5 h-4 bg-leshineBlue rounded-full mr-2"></span>
+                                                    業務同仁活動次數排行
+                                                </h3>
+                                                <div class="space-y-3">
+                                                    {Object.entries(stats.userCounts)
+                                                        .sort((a, b) => b[1] - a[1])
+                                                        .map(([user, count], index) => {
+                                                            const maxCount = Math.max(...Object.values(stats.userCounts)) || 1;
+                                                            const progressWidth = `${(count / maxCount) * 100}%`;
+                                                            return (
+                                                                <div key={user} class="flex items-center space-x-3">
+                                                                    <span class="w-5 text-xs font-bold text-slate-400 text-center">#{index + 1}</span>
+                                                                    <span class="w-16 text-xs font-semibold text-slate-700">{user}</span>
+                                                                    <div class="flex-grow bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                                                                        <div class="bg-leshineBlue h-full rounded-full" style={{ width: progressWidth }}></div>
+                                                                    </div>
+                                                                    <span class="text-xs font-black text-slate-800 w-10 text-right">{count} 次</span>
+                                                                </div>
+                                                            );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* 各同仁別類別分佈明細 (個人統計分析) */}
+                                        <div class="bg-slate-50 p-5 rounded-2xl border border-slate-100 mt-6">
+                                            <h3 class="text-sm font-bold text-slate-700 mb-4 flex items-center">
+                                                <span class="w-1.5 h-4 bg-indigo-600 rounded-full mr-2"></span>
+                                                業務個人詳細類別分析 (各別行程次數與比例)
+                                            </h3>
+                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                {salesmen.map(name => {
+                                                    const userEventsCount = stats.userCounts[name] || 0;
+                                                    const catCounts = stats.userCategoryCounts[name] || { "通路拜訪": 0, "客戶開發": 0, "報價紀錄": 0, "領牌": 0, "交車": 0, "客戶服務": 0 };
+                                                    
+                                                    return (
+                                                        <div key={name} class="bg-white p-4 rounded-xl border border-slate-200/60 shadow-sm flex flex-col justify-between">
+                                                            <div>
+                                                                <div class="flex justify-between items-center mb-3 pb-2 border-b border-slate-100">
+                                                                    <span class="font-bold text-slate-800 text-sm flex items-center">
+                                                                        <span class="w-2 h-2 rounded-full bg-leshineBlue mr-1.5"></span>
+                                                                        {name}
+                                                                    </span>
+                                                                    <span class="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full">
+                                                                        共 {userEventsCount} 次行程
+                                                                    </span>
+                                                                </div>
+                                                                <div class="space-y-2.5">
+                                                                    {Object.entries(catCounts).map(([cat, count]) => {
+                                                                        const percentage = userEventsCount > 0 ? ((count / userEventsCount) * 100).toFixed(0) : 0;
+                                                                        const colorStyle = CATEGORY_COLORS[cat] || { dot: "bg-slate-400" };
+                                                                        return (
+                                                                            <div key={cat} class="space-y-1">
+                                                                                <div class="flex justify-between text-[11px] text-slate-500">
+                                                                                    <span class="font-medium">{cat}</span>
+                                                                                    <span class="font-bold text-slate-700">{count} 次 ({percentage}%)</span>
+                                                                                </div>
+                                                                                <div class="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                                                                    <div class={`h-full rounded-full ${colorStyle.dot}`} style={{ width: `${percentage}%` }}></div>
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : currentRole === 'admin' && adminTab === 'users' ? (
+                                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-6">
+                                        <div>
+                                            <h2 class="text-xl font-black text-slate-800">業務同仁名單管理</h2>
+                                            <p class="text-xs text-slate-400 mt-1">管理者可在此動態新增二課的業務同仁，新增後即可登入使用系統</p>
+                                        </div>
+
+                                        <form onSubmit={handleAddNewSalesman} class="bg-slate-50 p-5 rounded-xl border border-slate-100 flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 items-end sm:items-center">
+                                            <div class="flex-grow w-full">
+                                                <label class="block text-xs font-bold text-slate-500 mb-1">新增業務員姓名</label>
+                                                <input 
+                                                    type="text" 
+                                                    value={newSalesmanName}
+                                                    onChange={(e) => setNewSalesmanName(e.target.value)}
+                                                    placeholder="請輸入姓名 (例如: 陳大明)"
+                                                    class="w-full bg-white border border-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20"
+                                                />
+                                            </div>
+                                            <button 
+                                                type="submit"
+                                                class="w-full sm:w-auto bg-leshineOrange hover:bg-orange-600 text-white font-bold text-sm px-5 py-2 rounded-lg transition shrink-0 shadow-md"
+                                            >
+                                                確認新增
+                                            </button>
+                                        </form>
+
+                                        <div class="border border-slate-100 rounded-xl overflow-hidden">
+                                            <table class="w-full text-left border-collapse">
+                                                <thead>
+                                                    <tr class="bg-slate-50 text-xs font-bold text-slate-500 border-b border-slate-100">
+                                                        <th class="p-4">業務同仁姓名</th>
+                                                        <th class="p-4 text-right">已登記行程次數</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-slate-100 text-sm text-slate-700">
+                                                    {salesmen.map((name) => (
+                                                        <tr key={name} class="hover:bg-slate-50/50">
+                                                            <td class="p-4 font-semibold">{name}</td>
+                                                            <td class="p-4 text-right font-bold text-slate-900">{stats.userCounts[name] || 0} 次</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div class="bg-white rounded-3xl shadow-sm border border-slate-100 p-6">
+                                        <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
+                                            <div class="flex items-center space-x-3 flex-wrap gap-y-2">
+                                                <h2 class="text-2xl font-black text-slate-800 tracking-tight flex items-center">
+                                                    {selectedYear} 年 {selectedMonth} 月
+                                                </h2>
+                                                
+                                                {/* 管理者模式特別加入下拉選單 */}
+                                                {currentRole === 'admin' ? (
+                                                    <div class="flex items-center space-x-2">
+                                                        <span class="text-xs font-black px-2.5 py-1 bg-leshineLightBlue text-leshineBlue rounded-full">
+                                                            👑 管理者
+                                                        </span>
+                                                        <select
+                                                            value={adminSelectedSalesman}
+                                                            onChange={(e) => setAdminSelectedSalesman(e.target.value)}
+                                                            class="bg-white border border-slate-200 text-xs font-bold text-slate-700 px-3 py-1.5 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-leshineBlue/20 cursor-pointer hover:border-slate-300 transition"
+                                                        >
+                                                            <option value="all">🌍 顯示所有同仁行程</option>
+                                                            {salesmen.map(name => (
+                                                                <option key={name} value={name}>👤 僅看 {name}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                ) : (
+                                                    <span class="text-xs font-bold px-2.5 py-1 bg-slate-100 text-slate-500 rounded-full">
+                                                        👤 僅顯示 {currentUser} 的行程
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div class="flex items-center space-x-1.5 text-xs text-slate-500 font-medium">
+                                                <span class="inline-block w-2.5 h-2.5 rounded-full bg-leshineOrange mr-1"></span>
+                                                <span>點擊日期方格可直接登記行程</span>
+                                            </div>
+                                        </div>
+
+                                        <div class="grid grid-cols-7 gap-1.5 mb-2 text-center text-xs font-black text-slate-400 tracking-wider">
+                                            <span>週日</span>
+                                            <span>週一</span>
+                                            <span>週二</span>
+                                            <span>週三</span>
+                                            <span>週四</span>
+                                            <span>週五</span>
+                                            <span>週六</span>
+                                        </div>
+
+                                        <div class="grid grid-cols-7 gap-2">
+                                            {Array.from({ length: startDayOfWeek }).map((_, i) => (
+                                                <div key={`offset-${i}`} class="bg-slate-50/30 border border-slate-100 rounded-2xl min-h-[110px] p-2 opacity-30 select-none"></div>
+                                            ))}
+
+                                            {Array.from({ length: daysInMonth }).map((_, i) => {
+                                                const day = i + 1;
+                                                const formattedDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                                
+                                                const dayEvents = filteredEvents.filter(ev => ev.date === formattedDate);
+                                                
+                                                dayEvents.sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+                                                return (
+                                                    <div 
+                                                        key={day}
+                                                        onClick={() => openAddModal(day)}
+                                                        class="bg-white border border-slate-200 hover:border-leshineOrange/50 hover:bg-orange-50/10 rounded-2xl min-h-[120px] p-2.5 transition duration-150 cursor-pointer flex flex-col group relative shadow-sm"
+                                                    >
+                                                        <span class="text-xs font-black text-slate-600 group-hover:text-leshineOrange transition">
+                                                            {day}
+                                                        </span>
+
+                                                        <div class="mt-2 space-y-1.5 flex-grow overflow-y-auto max-h-[100px]">
+                                                            {dayEvents.map(ev => {
+                                                                const categoryStyle = CATEGORY_COLORS[ev.category] || { bg: "bg-slate-100 text-slate-700", dot: "bg-slate-400" };
+                                                                return (
+                                                                    <div 
+                                                                        key={ev.id}
+                                                                        onClick={(e) => openEditModal(ev, e)}
+                                                                        class={`p-1.5 rounded-lg border text-[10px] leading-tight font-semibold flex flex-col space-y-0.5 hover:shadow transition-all ${categoryStyle.bg}`}
+                                                                    >
+                                                                        <div class="flex items-center justify-between">
+                                                                            <span class="truncate font-black text-[11px]">{ev.title}</span>
+                                                                            <span class="text-[9px] opacity-80 shrink-0 ml-1">{ev.startTime}</span>
+                                                                        </div>
+                                                                        
+                                                                        <div class="flex items-center justify-between text-[9px] opacity-90">
+                                                                            <span>{ev.location || "未設定地點"}</span>
+                                                                            {currentRole === 'admin' && (
+                                                                                <span class="px-1 bg-white/50 border border-slate-200/50 rounded scale-90 font-bold text-slate-600 shrink-0">
+                                                                                    👤 {ev.salesman}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
+                        </main>
+                    )}
+
+                    <footer class="bg-white border-t border-slate-200 text-slate-400 py-6 text-center text-xs mt-auto">
+                        <p>© 2026 格上租車 北一部二課 - 業務日程 management 系統 v2.0 (已啟用 Firebase Realtime 雲端數據儲存 與 Google Analytics 數據追蹤)</p>
+                    </footer>
+
+                    {/* MODAL WINDOWS */}
+                    {}
+                    {isModalOpen && (
+                        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                            <div class="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-100 flex flex-col max-h-[90vh]">
+                                <div class="bg-leshineBlue text-white px-6 py-4 flex items-center justify-between">
+                                    <div class="flex items-center space-x-2">
+                                        <span class="text-xl">📅</span>
+                                        <div>
+                                            <h3 class="font-black text-md">
+                                                {editingEvent ? "修改行程內容" : "登記每日業務行程"}
+                                            </h3>
+                                            <p class="text-xs text-blue-100">{selectedDate} (已登入：{editingEvent ? editingEvent.salesman : currentUser})</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={() => setIsModalOpen(false)}
+                                        class="text-white/80 hover:text-white font-bold text-lg"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+
+                                <form onSubmit={handleSaveEvent} class="p-6 space-y-4 overflow-y-auto flex-grow">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div class="col-span-2">
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">行程名稱 <span class="text-rose-500">*</span></label>
+                                            <input 
+                                                type="text" 
+                                                value={formTitle}
+                                                onChange={(e) => setFormTitle(e.target.value)}
+                                                placeholder="請輸入行程主軸 (例如: 拜訪信義經銷商)"
+                                                class="w-full bg-slate-50 border border-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20 font-medium"
+                                                required
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">行程類別</label>
+                                            <select 
+                                                value={formCategory}
+                                                onChange={(e) => setFormCategory(e.target.value)}
+                                                class="w-full bg-slate-50 border border-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20"
+                                            >
+                                                {Object.keys(CATEGORY_COLORS).map(cat => (
+                                                    <option key={cat} value={cat}>{cat}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">出差地點</label>
+                                            <input 
+                                                type="text" 
+                                                value={formLocation}
+                                                onChange={(e) => setFormLocation(e.target.value)}
+                                                placeholder="例如: 台北市信義區"
+                                                class="w-full bg-slate-50 border border-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">開始時間</label>
+                                            <input 
+                                                type="time" 
+                                                value={formStartTime}
+                                                onChange={(e) => setFormStartTime(e.target.value)}
+                                                class="w-full bg-slate-50 border border-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">結束時間</label>
+                                            <input 
+                                                type="time" 
+                                                value={formEndTime}
+                                                onChange={(e) => setFormEndTime(e.target.value)}
+                                                class="w-full bg-slate-50 border border-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20"
+                                            />
+                                        </div>
+
+                                        <div class="col-span-2">
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">客戶名稱 / 同業通路</label>
+                                            <input 
+                                                type="text" 
+                                                value={formCustomer}
+                                                onChange={(e) => setFormCustomer(e.target.value)}
+                                                placeholder="請輸入對接客戶或通路名稱"
+                                                class="w-full bg-slate-50 border border-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20 font-medium"
+                                            />
+                                        </div>
+
+                                        <div class="col-span-2">
+                                            <label class="block text-xs font-bold text-slate-500 mb-1">備註資訊</label>
+                                            <textarea 
+                                                value={formRemark}
+                                                onChange={(e) => setFormRemark(e.target.value)}
+                                                placeholder="補充其他詳細備忘細節..."
+                                                rows="3"
+                                                class="w-full bg-slate-50 border border-slate-200 text-sm px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20 font-medium"
+                                            ></textarea>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+                                        <div>
+                                            {editingEvent && (
+                                                <button
+                                                    type="button"
+                                                    onClick={triggerDeleteConfirmation}
+                                                    class="bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 font-bold text-xs py-2 px-4 rounded-xl transition"
+                                                >
+                                                    刪除行程
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div class="flex items-center space-x-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsModalOpen(false)}
+                                                class="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs py-2 px-4 rounded-xl transition"
+                                            >
+                                                取消
+                                            </button>
+                                            <button
+                                                type="submit"
+                                                class="bg-leshineOrange hover:bg-orange-600 text-white font-bold text-xs py-2 px-5 rounded-xl shadow transition"
+                                            >
+                                                儲存行程
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {isDeleteConfirmOpen && (
+                        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+                            <div class="bg-white rounded-3xl shadow-2xl max-w-sm w-full overflow-hidden border border-slate-100 p-6">
+                                <h3 class="text-lg font-black text-slate-800 mb-2">確認刪除行程</h3>
+                                <p class="text-xs text-slate-500 mb-6">您確認要永久刪除「{editingEvent?.title}」這項日程登記嗎？此操作將無法還原。</p>
+                                <div class="flex justify-end space-x-2">
+                                    <button
+                                        onClick={() => setIsDeleteConfirmOpen(false)}
+                                        class="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs py-2 px-4 rounded-xl transition"
+                                    >
+                                        取消
+                                    </button>
+                                    <button
+                                        onClick={confirmDeleteEvent}
+                                        class="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs py-2 px-5 rounded-xl shadow transition"
+                                    >
+                                        確定刪除
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {showAdminLoginModal && (
+                        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                            <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-100 p-6">
+                                <div class="flex justify-between items-center mb-4">
+                                    <h3 class="text-lg font-black text-slate-800">課長管理權限認證</h3>
+                                    <button 
+                                        onClick={() => {
+                                            setShowAdminLoginModal(false);
+                                            setAdminPasswordInput("");
+                                            setAdminError("");
+                                        }}
+                                        class="text-slate-400 hover:text-slate-600 font-bold text-lg"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                                <p class="text-xs text-slate-400 mb-4">請輸入管理者後台通行金鑰，進行資料庫全權檢視與數據導出。 (預設密碼: admin123)</p>
+                                
+                                <form onSubmit={handleAdminLogin} class="space-y-4">
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 mb-1">管理密碼</label>
+                                        <input 
+                                            type="password" 
+                                            value={adminPasswordInput}
+                                            onChange={(e) => setAdminPasswordInput(e.target.value)}
+                                            placeholder="請輸入管理者密碼"
+                                            class="w-full bg-slate-50 border border-slate-200 text-sm px-3 py-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-leshineBlue/20"
+                                            required
+                                            autoFocus
+                                        />
+                                        {adminError && <p class="text-xs text-rose-500 font-semibold mt-1.5">✕ {adminError}</p>}
+                                    </div>
+
+                                    <div class="flex justify-end space-x-2 pt-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowAdminLoginModal(false);
+                                                setAdminPasswordInput("");
+                                                setAdminError("");
+                                            }}
+                                            class="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs py-2 px-4 rounded-xl transition"
+                                        >
+                                            取消
+                                        </button>
+                                        <button
+                                            type="submit"
+                                            class="bg-leshineBlue hover:bg-leshineNavy text-white font-bold text-xs py-2 px-5 rounded-xl transition shadow"
+                                        >
+                                            驗證登入
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
